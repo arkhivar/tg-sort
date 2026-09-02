@@ -1,459 +1,274 @@
 let statusInterval = null;
-let authInterval = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-    const startBtn = document.getElementById('startBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
-    const verifyBtn = document.getElementById('verifyBtn');
-    const requestCodeBtn = document.getElementById('requestCodeBtn');
-    const fetchEmojisBtn = document.getElementById('fetchEmojisBtn');
-    const chatIdInput = document.getElementById('chatId');
-    const sortBySelect = document.getElementById('sortBy');
-    const sortOrderSelect = document.getElementById('sortOrder');
-    const progressCard = document.getElementById('progressCard');
-    const progressFill = document.getElementById('progressFill');
-    const progressText = document.getElementById('progressText');
-    const currentChat = document.getElementById('currentChat');
-    const statusText = document.getElementById('statusText');
-    const logContainer = document.getElementById('logContainer');
-    const statusDot = document.getElementById('statusDot');
-    const statusLabel = document.getElementById('statusLabel');
-    const userInfo = document.getElementById('userInfo');
-    const loginForm = document.getElementById('loginForm');
-    const sortCard = document.getElementById('sortCard');
-    const userName = document.getElementById('userName');
-    const userPhone = document.getElementById('userPhone');
-    const customOrderSection = document.getElementById('customOrderSection');
-    const standardSortOptions = document.getElementById('standardSortOptions');
-    const emojiList = document.getElementById('emojiList');
-    const sortByRadios = document.querySelectorAll('input[name="sortBy"]'); // Get all radio buttons with name 'sortBy'
+document.addEventListener("DOMContentLoaded", () => {
+    const startBtn = document.getElementById("startBtn");
+    const loadTopicsBtn = document.getElementById("loadTopicsBtn");
+    const importTopicsBtn = document.getElementById("importTopicsBtn");
+    const chatIdInput = document.getElementById("chatId");
+    const progressCard = document.getElementById("progressCard");
+    const progressFill = document.getElementById("progressFill");
+    const progressText = document.getElementById("progressText");
+    const currentChat = document.getElementById("currentChat");
+    const statusText = document.getElementById("statusText");
+    const logContainer = document.getElementById("logContainer");
+    const statusDot = document.getElementById("statusDot");
+    const statusLabel = document.getElementById("statusLabel");
+    const userInfo = document.getElementById("userInfo");
+    const userName = document.getElementById("userName");
+    const userPhone = document.getElementById("userPhone");
+    const setupNotice = document.getElementById("setupNotice");
+    const sortCard = document.getElementById("sortCard");
+    const customOrderSection = document.getElementById("customOrderSection");
+    const standardSortOptions = document.getElementById("standardSortOptions");
+    const emojiList = document.getElementById("emojiList");
+    const knownTopics = document.getElementById("knownTopics");
+    const topicCount = document.getElementById("topicCount");
+    const topicRoster = document.getElementById("topicRoster");
+    const sortByRadios = document.querySelectorAll('input[name="sortBy"]');
 
-    let cooldownTimer = null;
     let fetchedEmojis = [];
     let customEmojiOrder = [];
+    let draggedElement = null;
 
-    startBtn.addEventListener('click', startSort);
-    logoutBtn.addEventListener('click', logout);
-    verifyBtn.addEventListener('click', verifyCode);
-    requestCodeBtn.addEventListener('click', requestNewCode);
-    fetchEmojisBtn.addEventListener('click', fetchEmojis);
+    startBtn.addEventListener("click", startSort);
+    loadTopicsBtn.addEventListener("click", loadTopics);
+    importTopicsBtn.addEventListener("click", importTopics);
+    document.getElementById("fetchEmojisBtn").addEventListener("click", fetchEmojis);
+    sortByRadios.forEach((radio) => radio.addEventListener("change", updateSortOptions));
+    updateSortOptions();
+    checkBotStatus();
+    statusInterval = setInterval(updateStatus, 1000);
 
-    sortByRadios.forEach(radio => {
-        radio.addEventListener('change', () => {
-            if (radio.value === 'custom' && radio.checked) {
-                customOrderSection.style.display = 'block';
-                standardSortOptions.style.display = 'none';
-            } else if (radio.checked) {
-                customOrderSection.style.display = 'none';
-                standardSortOptions.style.display = 'block';
-                emojiList.style.display = 'none';
-            }
-        });
-    });
-
-    // Initialize UI state on page load
-    const checkedRadio = document.querySelector('input[name="sortBy"]:checked');
-    if (checkedRadio && checkedRadio.value === 'custom') {
-        customOrderSection.style.display = 'block';
-        standardSortOptions.style.display = 'none';
+    function updateSortOptions() {
+        const custom = document.querySelector('input[name="sortBy"]:checked').value === "custom";
+        customOrderSection.style.display = custom ? "block" : "none";
+        standardSortOptions.style.display = custom ? "none" : "block";
+        if (!custom) emojiList.style.display = "none";
     }
 
-    checkAuthStatus();
-    authInterval = setInterval(checkAuthStatus, 50000);
-
-    function fetchEmojis() {
-        const chatId = chatIdInput.value.trim();
-
-        if (!chatId) {
-            alert('Please enter a chat ID or username first');
-            return;
-        }
-
-        fetchEmojisBtn.disabled = true;
-        fetchEmojisBtn.textContent = 'Fetching...';
-
-        fetch('/fetch_emojis', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ chat_id: chatId })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                alert('Error: ' + data.error);
-                fetchEmojisBtn.disabled = false;
-                fetchEmojisBtn.textContent = '1. Fetch Emoji Icons';
-            } else {
-                fetchedEmojis = data.emojis;
-                displayEmojiList(fetchedEmojis);
-                fetchEmojisBtn.disabled = false;
-                fetchEmojisBtn.textContent = '🔄 Re-fetch Emojis';
+    async function checkBotStatus() {
+        try {
+            const data = await fetch("/auth_status").then((response) => response.json());
+            if (!data.configured) {
+                statusDot.className = "status-dot offline";
+                statusLabel.textContent = "BOT_TOKEN not configured";
+                setupNotice.style.display = "block";
+                sortCard.classList.add("disabled");
+                return;
             }
-        })
-        .catch(error => {
-            alert('Error: ' + error.message);
-            fetchEmojisBtn.disabled = false;
-            fetchEmojisBtn.textContent = '1. Fetch Emoji Icons';
-        });
+            if (!data.connected) {
+                statusDot.className = "status-dot offline";
+                statusLabel.textContent = data.error || "Bot is connecting…";
+                sortCard.classList.add("disabled");
+                return;
+            }
+            statusDot.className = "status-dot online";
+            statusLabel.textContent = data.poller?.running ? "Connected and listening" : "Connected";
+            userInfo.style.display = "block";
+            sortCard.classList.remove("disabled");
+            const bot = data.bot || {};
+            userName.textContent = bot.username ? `@${bot.username}` : (bot.first_name || "Bot");
+            userPhone.textContent = "Regular Telegram Bot API";
+            document.getElementById("userAvatar").textContent = (bot.first_name || "B")[0].toUpperCase();
+        } catch (error) {
+            statusDot.className = "status-dot offline";
+            statusLabel.textContent = "Unable to check bot status";
+        }
+    }
+
+    async function loadTopics() {
+        const chatId = chatIdInput.value.trim();
+        if (!chatId) return alert("Enter a group username or numeric chat ID first.");
+        loadTopicsBtn.disabled = true;
+        loadTopicsBtn.textContent = "Loading…";
+        try {
+            const data = await fetch(`/topics?chat_id=${encodeURIComponent(chatId)}`).then((response) => response.json());
+            if (data.error) throw new Error(data.error);
+            renderKnownTopics(data.topics || []);
+            topicCount.textContent = `${(data.topics || []).length} known`;
+        } catch (error) {
+            alert(`Could not load topics: ${error.message}`);
+        } finally {
+            loadTopicsBtn.disabled = false;
+            loadTopicsBtn.textContent = "Load known topics";
+        }
+    }
+
+    function renderKnownTopics(topics) {
+        if (!topics.length) {
+            knownTopics.innerHTML = "<p class='muted'>No topics learned yet. Import a roster or let the bot observe messages.</p>";
+        } else {
+            knownTopics.innerHTML = topics.map((topic) =>
+                `<div><strong>${escapeHtml(topic.title || "Untitled")}</strong> · ID ${topic.topic_id}` +
+                `${topic.emoji_id ? ` · emoji ${topic.emoji_id}` : ""}` +
+                `${topic.pinned ? " · pinned" : ""}</div>`
+            ).join("");
+        }
+        knownTopics.style.display = "block";
+    }
+
+    async function importTopics() {
+        const chatId = chatIdInput.value.trim();
+        if (!chatId) return alert("Enter a group username or numeric chat ID first.");
+        const lines = topicRoster.value.split("\n").map((line) => line.trim()).filter(Boolean);
+        if (!lines.length) return alert("Add at least one topic row.");
+        const topics = [];
+        for (const line of lines) {
+            const parts = line.split("|").map((part) => part.trim());
+            if (!/^\d+$/.test(parts[0])) return alert(`Invalid topic ID: ${parts[0]}`);
+            topics.push({
+                topic_id: parts[0],
+                title: parts[1] || "",
+                emoji_id: parts[2] || null,
+                pinned: ["true", "yes", "1"].includes((parts[3] || "").toLowerCase()),
+            });
+        }
+        importTopicsBtn.disabled = true;
+        try {
+            const response = await fetch("/import_topics", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({chat_id: chatId, topics}),
+            });
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+            renderKnownTopics(data.topics || []);
+            topicCount.textContent = `${(data.topics || []).length} known`;
+            alert("Topic roster saved.");
+        } catch (error) {
+            alert(`Could not save roster: ${error.message}`);
+        } finally {
+            importTopicsBtn.disabled = false;
+        }
+    }
+
+    async function fetchEmojis() {
+        const chatId = chatIdInput.value.trim();
+        if (!chatId) return alert("Enter a group username or numeric chat ID first.");
+        const button = document.getElementById("fetchEmojisBtn");
+        button.disabled = true;
+        button.textContent = "Fetching…";
+        try {
+            const data = await fetch("/fetch_emojis", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({chat_id: chatId}),
+            }).then((response) => response.json());
+            if (data.error) throw new Error(data.error);
+            fetchedEmojis = data.emojis || [];
+            displayEmojiList(fetchedEmojis);
+        } catch (error) {
+            alert(`Could not fetch emoji IDs: ${error.message}`);
+        } finally {
+            button.disabled = false;
+            button.textContent = fetchedEmojis.length ? "↻ Re-fetch emoji IDs" : "1. Fetch emoji IDs";
+        }
     }
 
     function displayEmojiList(emojis) {
-        emojiList.innerHTML = '<h3>2. Arrange Emoji Order (Drag to reorder)</h3><small>Top emojis will appear first. Uncheck to ignore.</small>';
-
-        const listContainer = document.createElement('div');
-        listContainer.id = 'emojiSortableList';
-        listContainer.style.cssText = 'display: flex; flex-direction: column; gap: 8px; margin-top: 10px;';
-
-        emojis.forEach((emoji, index) => {
-            const item = document.createElement('div');
-            item.className = 'emoji-item';
+        emojiList.innerHTML = "<h3>2. Arrange emoji order</h3><small>Uncheck emojis to exclude their topics.</small>";
+        const list = document.createElement("div");
+        list.id = "emojiSortableList";
+        emojis.forEach((emoji) => {
+            const item = document.createElement("label");
+            item.className = "emoji-item";
             item.draggable = true;
-            // Store emoji_id as string to preserve precision
             item.dataset.emojiId = String(emoji.emoji_id);
-            item.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 10px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; cursor: move;';
-
-            item.innerHTML = `
-                <input type="checkbox" checked class="emoji-checkbox" style="width: auto; margin: 0;">
-                <span style="font-weight: bold;">ID: ${emoji.emoji_id}</span>
-                <span style="flex: 1;">${emoji.example_title} (${emoji.count} topics)</span>
-                <span style="color: #999;">☰</span>
-            `;
-
-            item.addEventListener('dragstart', handleDragStart);
-            item.addEventListener('dragover', handleDragOver);
-            item.addEventListener('drop', handleDrop);
-            item.addEventListener('dragend', handleDragEnd);
-
-            listContainer.appendChild(item);
+            item.innerHTML = `<input type="checkbox" checked class="emoji-checkbox"><strong>${escapeHtml(emoji.emoji_id)}</strong><span>${escapeHtml(emoji.example_title || "Untitled")} (${emoji.count})</span>`;
+            item.addEventListener("dragstart", () => {
+                draggedElement = item;
+                item.style.opacity = "0.45";
+            });
+            item.addEventListener("dragover", (event) => event.preventDefault());
+            item.addEventListener("drop", (event) => {
+                event.preventDefault();
+                if (!draggedElement || draggedElement === item) return;
+                const items = [...list.querySelectorAll(".emoji-item")];
+                if (items.indexOf(draggedElement) < items.indexOf(item)) {
+                    item.parentNode.insertBefore(draggedElement, item.nextSibling);
+                } else {
+                    item.parentNode.insertBefore(draggedElement, item);
+                }
+            });
+            item.addEventListener("dragend", () => {
+                item.style.opacity = "1";
+                draggedElement = null;
+            });
+            list.appendChild(item);
         });
-
-        emojiList.appendChild(listContainer);
-        emojiList.style.display = 'block';
+        emojiList.appendChild(list);
+        emojiList.style.display = "block";
     }
 
-    let draggedElement = null;
-
-    function handleDragStart(e) {
-        draggedElement = this;
-        this.style.opacity = '0.4';
-    }
-
-    function handleDragOver(e) {
-        if (e.preventDefault) {
-            e.preventDefault();
-        }
-        return false;
-    }
-
-    function handleDrop(e) {
-        if (e.stopPropagation) {
-            e.stopPropagation();
-        }
-
-        if (draggedElement !== this) {
-            const allItems = [...document.querySelectorAll('.emoji-item')];
-            const draggedIndex = allItems.indexOf(draggedElement);
-            const targetIndex = allItems.indexOf(this);
-
-            if (draggedIndex < targetIndex) {
-                this.parentNode.insertBefore(draggedElement, this.nextSibling);
-            } else {
-                this.parentNode.insertBefore(draggedElement, this);
-            }
-        }
-
-        return false;
-    }
-
-    function handleDragEnd(e) {
-        this.style.opacity = '1';
-    }
-
-    function startSort() {
+    async function startSort() {
         const chatId = chatIdInput.value.trim();
-        const sortBy = document.querySelector('input[name="sortBy"]:checked').value; // Get the value of the checked radio button
-        const sortOrder = sortOrderSelect.value;
-        const skipPinned = document.getElementById('skipPinned').checked;
-        const customMessage = document.getElementById('customMessage').value.trim();
-
-        if (!chatId) {
-            alert('Please enter a chat ID or username');
-            return;
-        }
-
-        let requestBody = { 
+        const sortBy = document.querySelector('input[name="sortBy"]:checked').value;
+        const sortOrder = document.getElementById("sortOrder").value;
+        if (!chatId) return alert("Enter a group username or numeric chat ID.");
+        const body = {
             chat_id: chatId,
             sort_by: sortBy,
             sort_order: sortOrder,
-            skip_pinned: skipPinned
+            skip_pinned: document.getElementById("skipPinned").checked,
+            custom_message: document.getElementById("customMessage").value.trim() || ".",
         };
-
-        if (customMessage) {
-            requestBody.custom_message = customMessage;
+        if (sortBy === "custom") {
+            customEmojiOrder = [...document.querySelectorAll(".emoji-item")]
+                .filter((item) => item.querySelector(".emoji-checkbox").checked)
+                .map((item) => item.dataset.emojiId);
+            if (!customEmojiOrder.length) return alert("Select at least one emoji.");
+            body.custom_emoji_order = customEmojiOrder;
         }
-        
-        // Clear custom message field after using it
-        document.getElementById('customMessage').value = '';
-
-        if (sortBy === 'custom') {
-            const emojiItems = document.querySelectorAll('.emoji-item');
-            customEmojiOrder = [];
-
-            emojiItems.forEach(item => {
-                const checkbox = item.querySelector('.emoji-checkbox');
-                if (checkbox.checked) {
-                    // Keep as string to preserve precision
-                    customEmojiOrder.push(item.dataset.emojiId);
-                }
-            });
-
-            if (customEmojiOrder.length === 0) {
-                alert('Please select at least one emoji to include in the sort');
-                return;
-            }
-
-            requestBody.custom_emoji_order = customEmojiOrder;
-        }
-
         startBtn.disabled = true;
-        startBtn.textContent = 'Starting...';
-
-        fetch('/start_sort', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                alert('Error: ' + data.error);
-                startBtn.disabled = false;
-                startBtn.textContent = 'Start Sort';
-            } else {
-                progressCard.style.display = 'block';
-                startStatusPolling();
-            }
-        })
-        .catch(error => {
-            alert('Error: ' + error.message);
+        startBtn.textContent = "Starting…";
+        try {
+            const data = await fetch("/start_sort", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(body),
+            }).then((response) => response.json());
+            if (data.error) throw new Error(data.error);
+            progressCard.style.display = "block";
+        } catch (error) {
+            alert(`Could not start sort: ${error.message}`);
             startBtn.disabled = false;
-            startBtn.textContent = 'Start Sort';
-        });
-    }
-
-    function startStatusPolling() {
-        if (statusInterval) {
-            clearInterval(statusInterval);
-        }
-
-        statusInterval = setInterval(updateStatus, 1000);
-        updateStatus();
-    }
-
-    function updateStatus() {
-        fetch('/status')
-            .then(response => response.json())
-            .then(data => {
-                currentChat.textContent = data.current_chat || '-';
-
-                if (data.running) {
-                    statusText.textContent = 'Running...';
-                    statusText.style.color = '#667eea';
-                } else if (data.error) {
-                    statusText.textContent = 'Error!';
-                    statusText.style.color = '#c33';
-                    stopStatusPolling();
-                } else if (data.total > 0 && data.progress >= data.total) {
-                    statusText.textContent = 'Completed';
-                    statusText.style.color = '#5cb85c';
-                    stopStatusPolling();
-                } else if (!data.running && data.total > 0 && data.progress < data.total) {
-                    statusText.textContent = 'Processing...';
-                    statusText.style.color = '#667eea';
-                } else {
-                    statusText.textContent = 'Completed';
-                    statusText.style.color = '#5cb85c';
-                    stopStatusPolling();
-                }
-
-                const progress = data.total > 0 ? (data.progress / data.total) * 100 : 0;
-                progressFill.style.width = progress + '%';
-                progressText.textContent = `${data.progress} / ${data.total}`;
-
-                if (data.logs && data.logs.length > 0) {
-                    logContainer.innerHTML = '';
-                    data.logs.forEach(log => {
-                        const logEntry = document.createElement('div');
-                        logEntry.className = 'log-entry';
-                        logEntry.textContent = log;
-                        logContainer.appendChild(logEntry);
-                    });
-                    logContainer.scrollTop = logContainer.scrollHeight;
-                }
-
-                if (!data.running) {
-                    startBtn.disabled = false;
-                    startBtn.textContent = 'Start Sort';
-                    // Clear custom message when sort completes
-                    document.getElementById('customMessage').value = '';
-                }
-            })
-            .catch(error => {
-                console.error('Status update error:', error);
-            });
-    }
-
-    function stopStatusPolling() {
-        if (statusInterval) {
-            clearInterval(statusInterval);
-            statusInterval = null;
+            startBtn.textContent = "Start sort";
         }
     }
 
-    function logout() {
-        if (!confirm('Are you sure you want to logout? You will need to authenticate again.')) {
-            return;
-        }
-
-        fetch('/logout', {
-            method: 'POST'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                location.reload();
+    async function updateStatus() {
+        try {
+            const data = await fetch("/status").then((response) => response.json());
+            currentChat.textContent = data.current_chat || "-";
+            progressFill.style.width = `${data.total ? (data.progress / data.total) * 100 : 0}%`;
+            progressText.textContent = `${data.progress} / ${data.total}`;
+            if (data.running) {
+                statusText.textContent = "Running…";
+                statusText.style.color = "#667eea";
+            } else if (data.error) {
+                statusText.textContent = "Error";
+                statusText.style.color = "#c33";
+            } else if (data.total > 0 && data.progress >= data.total) {
+                statusText.textContent = "Completed";
+                statusText.style.color = "#27834b";
             } else {
-                alert('Logout failed: ' + (data.error || 'Unknown error'));
+                statusText.textContent = "Idle";
+                statusText.style.color = "#666";
             }
-        })
-        .catch(error => {
-            alert('Error: ' + error.message);
-        });
-    }
-
-    function checkAuthStatus() {
-        fetch('/auth_status')
-            .then(response => response.json())
-            .then(data => {
-                if (data.authorized) {
-                    statusDot.className = 'status-dot online';
-                    statusLabel.textContent = 'Connected';
-                    userInfo.style.display = 'block';
-                    loginForm.style.display = 'none';
-                    sortCard.classList.remove('disabled');
-
-                    const fullName = [data.user.first_name, data.user.last_name].filter(Boolean).join(' ');
-                    userName.textContent = fullName || data.user.username || 'User';
-                    userPhone.textContent = data.user.phone || '';
-
-                    const initials = (data.user.first_name || data.user.username || '?')[0].toUpperCase();
-                    document.getElementById('userAvatar').textContent = initials;
-                } else {
-                    statusDot.className = 'status-dot offline';
-                    statusLabel.textContent = 'Not authenticated';
-                    userInfo.style.display = 'none';
-                    loginForm.style.display = 'block';
-                    sortCard.classList.add('disabled');
-                }
-            })
-            .catch(error => {
-                console.error('Auth status error:', error);
-                statusDot.className = 'status-dot offline';
-                statusLabel.textContent = 'Error checking status';
-            });
-    }
-
-    function verifyCode() {
-        const code = document.getElementById('loginCode').value.trim();
-
-        if (!code) {
-            alert('Please enter the verification code');
-            return;
+            if (data.logs?.length) {
+                logContainer.innerHTML = data.logs.map((log) => `<div class="log-entry">${escapeHtml(log)}</div>`).join("");
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+            startBtn.disabled = data.running;
+            if (!data.running) startBtn.textContent = "Start sort";
+        } catch (error) {
+            console.error("Status update error:", error);
         }
-
-        verifyBtn.disabled = true;
-        verifyBtn.textContent = 'Verifying...';
-
-        fetch('/login', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: 'code=' + encodeURIComponent(code)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                alert('Login failed: ' + data.error);
-                verifyBtn.disabled = false;
-                verifyBtn.textContent = 'Verify Code';
-            } else {
-                document.getElementById('loginCode').value = '';
-                alert('Login successful!');
-                checkAuthStatus();
-                verifyBtn.disabled = false;
-                verifyBtn.textContent = 'Verify Code';
-            }
-        })
-        .catch(error => {
-            alert('Error: ' + error.message);
-            verifyBtn.disabled = false;
-            verifyBtn.textContent = 'Verify Code';
-        });
     }
 
-    function requestNewCode() {
-        requestCodeBtn.disabled = true;
-        const originalText = requestCodeBtn.textContent;
-        requestCodeBtn.textContent = 'Sending...';
-
-        fetch('/request_code', {
-            method: 'POST'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                if (data.cooldown_remaining) {
-                    startCooldown(data.cooldown_remaining);
-                } else {
-                    alert(data.error);
-                    requestCodeBtn.disabled = false;
-                    requestCodeBtn.textContent = originalText;
-                }
-            } else {
-                alert('New verification code sent to your Telegram app!');
-                startCooldown(60);
-            }
-        })
-        .catch(error => {
-            alert('Error: ' + error.message);
-            requestCodeBtn.disabled = false;
-            requestCodeBtn.textContent = originalText;
-        });
-    }
-
-    function startCooldown(seconds) {
-        let remaining = seconds;
-        requestCodeBtn.disabled = true;
-
-        if (cooldownTimer) {
-            clearInterval(cooldownTimer);
-        }
-
-        cooldownTimer = setInterval(() => {
-            if (remaining <= 0) {
-                clearInterval(cooldownTimer);
-                cooldownTimer = null;
-                requestCodeBtn.disabled = false;
-                requestCodeBtn.textContent = 'Request New Code';
-            } else {
-                requestCodeBtn.textContent = `Wait ${remaining}s`;
-                remaining--;
-            }
-        }, 1000);
+    function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
+        }[char]));
     }
 });

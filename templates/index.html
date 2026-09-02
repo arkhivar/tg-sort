@@ -3,50 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telegram Topic Sorter</title>
+    <title>Telegram Topic Sorter · Safe Bot Mode</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>📋 Telegram Topic Sorter</h1>
-            <p>Sort forum topics by emoji ID in any Telegram group</p>
+            <h1>Telegram Topic Sorter</h1>
+            <p>Regular Bot API workflow — no user account or API hash</p>
         </header>
 
         <div class="card" id="authCard">
-            <h2>Authentication Status</h2>
+            <h2>Bot connection</h2>
             <div class="auth-status">
                 <div class="status-indicator">
                     <span class="status-dot" id="statusDot"></span>
-                    <span id="statusLabel">Checking...</span>
+                    <span id="statusLabel">Checking…</span>
                 </div>
                 <div id="userInfo" style="display: none;">
                     <div class="user-profile">
-                        <div class="user-avatar" id="userAvatar">?</div>
+                        <div class="user-avatar" id="userAvatar">B</div>
                         <div class="user-details">
                             <strong id="userName">-</strong>
-                            <small id="userPhone">-</small>
+                            <small id="userPhone">Bot API</small>
                         </div>
                     </div>
                 </div>
             </div>
-            <div id="loginForm" style="display: none;">
-                <div class="form-group">
-                    <label for="loginCode">Verification Code:</label>
-                    <input type="text" id="loginCode" placeholder="Enter code from Telegram" />
-                    <small>Check your Telegram app for the verification code</small>
-                </div>
-                <button id="verifyBtn" class="btn btn-primary">Verify Code</button>
-                <button id="requestCodeBtn" class="btn btn-secondary">Request New Code</button>
+            <div id="setupNotice" class="info-message" style="display: none;">
+                <strong>One-time setup</strong>
+                <p>Create a bot with <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>, then save its token as the Replit Secret <code>BOT_TOKEN</code>. Add the bot to your forum group as an administrator with <strong>Manage Topics</strong>.</p>
             </div>
         </div>
 
         <div class="card" id="sortCard">
-            <h2>Start Sorting</h2>
+            <h2>Start sorting</h2>
+            <div class="info-message">
+                <strong>Safe mode limitation:</strong> Telegram’s Bot API can send to a known topic, but it still cannot list historical group topics. The bot learns topics from incoming updates; use the roster importer below for older topics.
+            </div>
             <div class="form-group">
-                <label for="chatId">Chat ID, Username, Name, or Invite Link:</label>
-                <input type="text" id="chatId" placeholder="e.g., @groupname, Group Name, or https://t.me/+invite" />
-                <small>Enter group @username, name, invite link, or numeric ID</small>
+                <label for="chatId">Group username or numeric chat ID</label>
+                <input type="text" id="chatId" placeholder="e.g. @my_forum_group or -1001234567890" />
+                <small>The bot must already be an administrator in this group.</small>
+            </div>
+            <div class="form-group">
+                <button id="loadTopicsBtn" class="btn btn-secondary">Load known topics</button>
+                <span id="topicCount" class="muted"></span>
+                <div id="knownTopics" class="topic-list" style="display: none;"></div>
+            </div>
+            <div class="form-group">
+                <label for="topicRoster">Import or update topic roster</label>
+                <textarea id="topicRoster" rows="5" placeholder="One per line: topic_id | title | emoji_id | pinned&#10;123 | Announcements | 5368324170671202286 | true&#10;456 | Support"></textarea>
+                <small>Only topic_id is required. Use the optional fields to enable alphabetical/emoji sorting and mark pinned topics.</small>
+                <button id="importTopicsBtn" class="btn btn-secondary">Save roster</button>
             </div>
             <div class="form-group">
                 <label>Sort By:</label>
@@ -77,20 +86,20 @@
             <div class="form-group">
                 <label style="display: flex; align-items: center; gap: 8px;">
                     <input type="checkbox" id="skipPinned" checked style="width: auto; margin: 0;">
-                    <span>Do not apply sort to pinned topics</span>
+                        <span>Skip topics marked pinned in the roster</span>
                 </label>
             </div>
             <div class="form-group">
                 <label for="customMessage">Sort Message (optional):</label>
                 <input type="text" id="customMessage" placeholder="Leave empty to use default (.)" maxlength="200" />
-                <small>Custom message to send in topics for sorting. Default is "."</small>
+                <small>This quiet marker moves activity without using a user account. Default is "."</small>
             </div>
             <div id="customOrderSection" style="display: none;">
                 <button id="fetchEmojisBtn" class="btn btn-secondary">1. Fetch Emoji Icons</button>
                 <div id="emojiList" style="margin-top: 15px; display: none;"></div>
             </div>
             <button id="startBtn" class="btn btn-primary">Start Sort</button>
-            <button id="logoutBtn" class="btn btn-secondary">Logout</button>
+            <p class="security-note">The bot token stays server-side in Replit Secrets and is never sent to the browser.</p>
         </div>
 
         <div class="card" id="progressCard" style="display: none;">

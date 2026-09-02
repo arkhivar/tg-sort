@@ -1,324 +1,337 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
-from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
+from __future__ import annotations
+
+from flask import Flask, jsonify, render_template, request
 import os
 import queue
 import threading
 import time
-import asyncio
 from datetime import datetime
+from typing import Any
+
+from bot_handler import (
+    TelegramBotAPI,
+    TelegramBotError,
+    TopicStore,
+    fetch_emoji_icons,
+    sort_topics,
+)
+
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SESSION_SECRET', os.urandom(24))
+app.secret_key = os.environ.get("SESSION_SECRET", os.urandom(24))
 
-api_id = os.environ.get('API_ID')
-api_hash = os.environ.get('API_HASH')
-phone = os.environ.get('PHONE_NUMBER')
+bot_token = os.environ.get("BOT_TOKEN", "").strip()
+bot = TelegramBotAPI(bot_token) if bot_token else None
+bot_identity: dict[str, Any] | None = None
+bot_identity_error: str | None = None
+topic_store = TopicStore()
+update_state = {
+    "running": False,
+    "last_update": None,
+    "error": None,
+    "observed_topics": 0,
+}
 
-client = None
-telethon_loop = None
-last_code_request_time = 0
-CODE_REQUEST_COOLDOWN = 60
-
-def run_async_in_telethon_thread(coro):
-    """Run an async coroutine in the Telethon thread's event loop"""
-    if telethon_loop is None:
-        raise RuntimeError("Telethon loop not initialized")
-    future = asyncio.run_coroutine_threadsafe(coro, telethon_loop)
-    return future.result(timeout=30)
-
-def init_telethon():
-    """Initialize Telethon in a dedicated thread with its own event loop"""
-    global client, telethon_loop
-    
-    if not api_id or not api_hash:
-        return
-    
-    old_umask = os.umask(0o000)
-    
-    telethon_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(telethon_loop)
-    
-    client = TelegramClient(
-        'session', 
-        int(api_id), 
-        api_hash, 
-        loop=telethon_loop,
-        device_model='Desktop',
-        app_version='1.0',
-        lang_code='en',
-        system_lang_code='en'
-    )
-    
-    os.umask(old_umask)
-    
-    async def start():
-        await client.connect()
-        print("Telethon client connected")
-    
-    telethon_loop.run_until_complete(start())
-    telethon_loop.run_forever()
-
-telethon_thread = threading.Thread(target=init_telethon, daemon=True)
-telethon_thread.start()
-time.sleep(2)
-
-task_queue = queue.Queue()
+task_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
 sort_status = {
     "running": False,
     "current_chat": None,
     "progress": 0,
     "total": 0,
     "error": None,
-    "logs": []
+    "logs": [],
 }
+status_lock = threading.Lock()
 
-def add_log(message):
+
+def add_log(message: str) -> None:
     timestamp = datetime.now().strftime("%H:%M:%S")
-    sort_status["logs"].append(f"[{timestamp}] {message}")
-    if len(sort_status["logs"]) > 50:
-        sort_status["logs"] = sort_status["logs"][-50:]
+    with status_lock:
+        sort_status["logs"].append(f"[{timestamp}] {message}")
+        if len(sort_status["logs"]) > 50:
+            sort_status["logs"] = sort_status["logs"][-50:]
 
-def background_worker():
+
+def set_status(**values: Any) -> None:
+    with status_lock:
+        sort_status.update(values)
+
+
+def remember_update(update: dict[str, Any]) -> None:
+    message = update.get("message")
+    if not isinstance(message, dict):
+        return
+
+    topic = topic_store.observe_message(message)
+    if topic:
+        update_state["observed_topics"] += 1
+
+    text = (message.get("text") or "").strip()
+    if text.startswith("/topic") and bot and message.get("chat"):
+        command = text.split()[0].split("@")[0]
+        if command == "/topic":
+            thread_id = message.get("message_thread_id")
+            reply = (
+                f"Topic ID: {thread_id}"
+                if thread_id is not None
+                else "This message is in the General topic; it has no regular topic ID."
+            )
+            try:
+                bot.send_message(
+                    message["chat"]["id"],
+                    reply,
+                    int(thread_id) if thread_id is not None else None,
+                )
+            except TelegramBotError as exc:
+                # A command in General cannot always be sent with a thread ID.
+                # The discovery data is already recorded; do not stop polling.
+                add_log(f"Could not answer /topic: {exc}")
+
+
+def update_poller() -> None:
+    """Long-poll updates and build the topic roster without a user account."""
+    global bot_identity, bot_identity_error
+    if not bot:
+        return
+
+    try:
+        bot_identity = bot.get_me()
+        bot_identity_error = None
+        add_log(
+            f"Connected as @{bot_identity.get('username', bot_identity.get('first_name', 'bot'))}"
+        )
+    except TelegramBotError as exc:
+        bot_identity_error = str(exc)
+        update_state["error"] = str(exc)
+        return
+
+    offset: int | None = None
+    update_state["running"] = True
+    while True:
+        try:
+            updates = bot.get_updates(offset=offset)
+            update_state["error"] = None
+            for update in updates:
+                offset = int(update["update_id"]) + 1
+                update_state["last_update"] = datetime.now().isoformat(timespec="seconds")
+                remember_update(update)
+        except TelegramBotError as exc:
+            update_state["error"] = str(exc)
+            if exc.error_code == 409:
+                update_state["running"] = False
+                bot_identity_error = (
+                    "Another Telegram consumer or a webhook is using this bot. "
+                    "Disable it before using polling."
+                )
+                return
+            time.sleep(5)
+        except Exception as exc:
+            update_state["error"] = str(exc)
+            time.sleep(5)
+
+
+def background_worker() -> None:
     while True:
         task = task_queue.get()
         if task is None:
             break
-        
         try:
-            chat_id = task['chat_id']
-            sort_by = task.get('sort_by', 'emoji')
-            sort_order = task.get('sort_order', 'ascending')
-            skip_pinned = task.get('skip_pinned', True)
-            custom_emoji_order = task.get('custom_emoji_order')
-            custom_message = task.get('custom_message', '.')
-            
-            sort_status["running"] = True
-            sort_status["current_chat"] = chat_id
-            sort_status["progress"] = 0
-            sort_status["total"] = 0
-            sort_status["error"] = None
-            
-            add_log(f"Starting sort for chat: {chat_id}")
-            add_log(f"Sort method: {sort_by}, Order: {sort_order}")
-            if skip_pinned:
-                add_log("Pinned topics will be skipped")
-            if custom_emoji_order:
-                add_log(f"Using custom emoji order with {len(custom_emoji_order)} emojis")
-            add_log(f"Using message: '{custom_message}'")
-            
-            from telethon_handler import sort_topics
-            run_async_in_telethon_thread(sort_topics(client, chat_id, sort_status, add_log, sort_by, sort_order, skip_pinned, custom_emoji_order, custom_message))
-            
-            add_log("Sort completed successfully!")
-            
-        except Exception as e:
-            sort_status["error"] = str(e)
-            add_log(f"Error: {str(e)}")
+            set_status(
+                running=True,
+                current_chat=task["chat_id"],
+                progress=0,
+                total=0,
+                error=None,
+                logs=[],
+            )
+            add_log(f"Starting safe bot sort for chat: {task['chat_id']}")
+            add_log(f"Sort method: {task['sort_by']}, order: {task['sort_order']}")
+            if task["skip_pinned"]:
+                add_log("Only topics explicitly marked pinned in the roster will be skipped")
+            sort_topics(
+                bot=bot,
+                store=topic_store,
+                bot_user_id=bot_identity["id"],
+                chat_id=task["chat_id"],
+                sort_status=sort_status,
+                add_log=add_log,
+                sort_by=task["sort_by"],
+                sort_order=task["sort_order"],
+                skip_pinned=task["skip_pinned"],
+                custom_emoji_order=task["custom_emoji_order"],
+                custom_message=task["custom_message"],
+            )
+            add_log("Sort completed successfully.")
+        except Exception as exc:
+            set_status(error=str(exc))
+            add_log(f"Error: {exc}")
         finally:
-            sort_status["running"] = False
+            set_status(running=False)
             task_queue.task_done()
 
-worker = threading.Thread(target=background_worker, daemon=True)
-worker.start()
 
-@app.route('/')
+if bot:
+    threading.Thread(target=update_poller, daemon=True, name="telegram-updates").start()
+threading.Thread(target=background_worker, daemon=True, name="sort-worker").start()
+
+
+def require_bot():
+    if not bot:
+        return jsonify(
+            {
+                "error": (
+                    "BOT_TOKEN is not configured. Create a bot with @BotFather and "
+                    "save its token as a Replit Secret named BOT_TOKEN."
+                )
+            }
+        ), 503
+    if bot_identity_error or not bot_identity:
+        return jsonify({"error": bot_identity_error or "The bot is not connected yet."}), 503
+    return None
+
+
+def canonical_chat_id(chat_id: str) -> str:
+    """Resolve @usernames once so learned numeric topic keys are reusable."""
+    chat = bot.get_chat(chat_id)
+    return str(chat["id"])
+
+
+@app.route("/")
 def index():
-    if not client:
-        return render_template('error.html', error="Missing API credentials. Please set API_ID, API_HASH, and PHONE_NUMBER in Replit Secrets.")
-    
-    try:
-        async def check_auth():
-            return await client.is_user_authorized()
-        
-        is_authorized = run_async_in_telethon_thread(check_auth())
-        
-        if not is_authorized and 'phone_code_hash' not in session:
-            try:
-                async def send_code():
-                    return await client.send_code_request(phone)
-                
-                sent_code = run_async_in_telethon_thread(send_code())
-                session['phone_code_hash'] = sent_code.phone_code_hash
-            except Exception as e:
-                print(f"Failed to send code: {e}")
-    except Exception as e:
-        print(f"Auth check error: {e}")
-    
-    return render_template('index.html')
+    return render_template("index.html", bot_configured=bool(bot))
 
-@app.route('/login', methods=['POST'])
-def login():
-    if not client:
-        return jsonify({"error": "Client not initialized"}), 500
-    
-    code = request.form.get('code')
-    phone_code_hash = session.get('phone_code_hash')
-    
-    if not code:
-        return jsonify({"error": "Please enter the verification code"}), 400
-    
-    try:
-        async def do_sign_in():
-            result = await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
-            if os.path.exists('session.session'):
-                os.chmod('session.session', 0o666)
-            return result
-        
-        run_async_in_telethon_thread(do_sign_in())
-        session.pop('phone_code_hash', None)
-        return jsonify({"status": "success"})
-    except PhoneCodeInvalidError:
-        return jsonify({"error": "Invalid code. Please try again."}), 400
-    except SessionPasswordNeededError:
-        return jsonify({"error": "2FA is enabled. Please disable it temporarily."}), 400
-    except Exception as e:
-        return jsonify({"error": f"Login error: {str(e)}"}), 500
 
-@app.route('/fetch_emojis', methods=['POST'])
-def fetch_emojis():
-    if not client:
-        return jsonify({"error": "Client not initialized. Please check API credentials."}), 500
-    
-    if not os.path.exists('session.session'):
-        return jsonify({"error": "Not authorized. Please login first."}), 401
-    
-    data = request.json
-    chat_id = data.get('chat_id')
-    
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
+
+
+@app.route("/auth_status")
+def auth_status():
+    if not bot:
+        return jsonify(
+            {
+                "configured": False,
+                "connected": False,
+                "error": "BOT_TOKEN is not configured.",
+            }
+        )
+    return jsonify(
+        {
+            "configured": True,
+            "connected": bool(bot_identity and not bot_identity_error),
+            "bot": bot_identity,
+            "error": bot_identity_error,
+            "poller": update_state,
+        }
+    )
+
+
+@app.route("/topics")
+def topics():
+    missing = require_bot()
+    if missing:
+        return missing
+    chat_id = (request.args.get("chat_id") or "").strip()
     if not chat_id:
         return jsonify({"error": "Chat ID is required"}), 400
-    
     try:
-        from telethon_handler import fetch_emoji_icons
-        emoji_list = run_async_in_telethon_thread(fetch_emoji_icons(client, chat_id, add_log))
-        return jsonify({"emojis": emoji_list})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        chat_id = canonical_chat_id(chat_id)
+    except TelegramBotError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(
+        {
+            "topics": topic_store.list_for_chat(chat_id),
+            "can_enumerate_historical": False,
+            "note": (
+                "The Bot API does not provide a method to list historical group "
+                "topics. These are topics learned from updates or imported manually."
+            ),
+        }
+    )
 
-@app.route('/start_sort', methods=['POST'])
+
+@app.route("/import_topics", methods=["POST"])
+def import_topics():
+    missing = require_bot()
+    if missing:
+        return missing
+    data = request.get_json(silent=True) or {}
+    chat_id = str(data.get("chat_id") or "").strip()
+    imported = data.get("topics")
+    if not chat_id or not isinstance(imported, list) or not imported:
+        return jsonify({"error": "chat_id and a non-empty topics list are required"}), 400
+    try:
+        chat_id = canonical_chat_id(chat_id)
+        saved = topic_store.import_topics(chat_id, imported)
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"status": "success", "topics": saved})
+
+
+@app.route("/fetch_emojis", methods=["POST"])
+def fetch_emojis_route():
+    missing = require_bot()
+    if missing:
+        return missing
+    data = request.get_json(silent=True) or {}
+    chat_id = str(data.get("chat_id") or "").strip()
+    if not chat_id:
+        return jsonify({"error": "Chat ID is required"}), 400
+    try:
+        chat_id = canonical_chat_id(chat_id)
+        return jsonify({"emojis": fetch_emoji_icons(topic_store, chat_id, add_log)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/start_sort", methods=["POST"])
 def start_sort():
-    if not client:
-        return jsonify({"error": "Client not initialized. Please check API credentials."}), 500
-    
-    if not os.path.exists('session.session'):
-        return jsonify({"error": "Not authorized. Please login first."}), 401
-    
-    data = request.json
-    chat_id = data.get('chat_id')
-    sort_by = data.get('sort_by', 'emoji')
-    sort_order = data.get('sort_order', 'ascending')
-    skip_pinned = data.get('skip_pinned', True)
-    custom_emoji_order = data.get('custom_emoji_order')  # List of emoji IDs in desired order
-    custom_message = data.get('custom_message', '.')  # Custom message for sorting
-    
+    missing = require_bot()
+    if missing:
+        return missing
+    data = request.get_json(silent=True) or {}
+    chat_id = str(data.get("chat_id") or "").strip()
+    sort_by = data.get("sort_by", "emoji")
+    sort_order = data.get("sort_order", "ascending")
+    skip_pinned = bool(data.get("skip_pinned", True))
+    custom_emoji_order = data.get("custom_emoji_order")
+    custom_message = str(data.get("custom_message") or ".").strip() or "."
+
     if not chat_id:
         return jsonify({"error": "Chat ID is required"}), 400
-    
-    if sort_by not in ['emoji', 'alphabetical', 'custom']:
-        return jsonify({"error": "Invalid sort_by value. Must be 'emoji', 'alphabetical', or 'custom'"}), 400
-    
-    if sort_order not in ['ascending', 'descending']:
-        return jsonify({"error": "Invalid sort_order value. Must be 'ascending' or 'descending'"}), 400
-    
-    if sort_by == 'custom' and not custom_emoji_order:
-        return jsonify({"error": "custom_emoji_order is required when sort_by is 'custom'"}), 400
-    
+    if sort_by not in ("emoji", "alphabetical", "custom"):
+        return jsonify({"error": "Invalid sort method"}), 400
+    if sort_order not in ("ascending", "descending"):
+        return jsonify({"error": "Invalid sort order"}), 400
+    if sort_by == "custom" and not custom_emoji_order:
+        return jsonify({"error": "Select at least one emoji for custom sorting"}), 400
     if sort_status["running"]:
         return jsonify({"error": "A sort operation is already running"}), 400
-    
-    task_queue.put({
-        'chat_id': chat_id,
-        'sort_by': sort_by,
-        'sort_order': sort_order,
-        'skip_pinned': skip_pinned,
-        'custom_emoji_order': custom_emoji_order,
-        'custom_message': custom_message
-    })
-    return jsonify({"status": "queued", "message": "Sort operation started"})
 
-@app.route('/status')
+    try:
+        chat_id = canonical_chat_id(chat_id)
+    except TelegramBotError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    task_queue.put(
+        {
+            "chat_id": chat_id,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "skip_pinned": skip_pinned,
+            "custom_emoji_order": custom_emoji_order,
+            "custom_message": custom_message[:200],
+        }
+    )
+    return jsonify({"status": "queued", "message": "Sort operation queued"})
+
+
+@app.route("/status")
 def status():
-    return jsonify(sort_status)
+    with status_lock:
+        return jsonify(dict(sort_status))
 
-@app.route('/auth_status')
-def auth_status():
-    if not client:
-        return jsonify({"authorized": False, "error": "Client not initialized"})
-    
-    try:
-        async def check_auth():
-            if not await client.is_user_authorized():
-                return None
-            me = await client.get_me()
-            return {
-                "id": me.id,
-                "first_name": me.first_name,
-                "last_name": me.last_name,
-                "username": me.username,
-                "phone": me.phone
-            }
-        
-        user_info = run_async_in_telethon_thread(check_auth())
-        
-        if user_info:
-            return jsonify({
-                "authorized": True,
-                "user": user_info
-            })
-        else:
-            return jsonify({"authorized": False})
-    except Exception as e:
-        return jsonify({"authorized": False, "error": str(e)})
 
-@app.route('/request_code', methods=['POST'])
-def request_code():
-    global last_code_request_time
-    
-    if not client:
-        return jsonify({"error": "Client not initialized"}), 500
-    
-    current_time = time.time()
-    time_since_last_request = current_time - last_code_request_time
-    
-    if time_since_last_request < CODE_REQUEST_COOLDOWN:
-        remaining = int(CODE_REQUEST_COOLDOWN - time_since_last_request)
-        return jsonify({
-            "error": f"Please wait {remaining} seconds before requesting another code",
-            "cooldown_remaining": remaining
-        }), 429
-    
-    try:
-        async def send_code():
-            return await client.send_code_request(phone)
-        
-        sent_code = run_async_in_telethon_thread(send_code())
-        session['phone_code_hash'] = sent_code.phone_code_hash
-        last_code_request_time = current_time
-        
-        return jsonify({
-            "status": "success",
-            "message": "Verification code sent to your Telegram app"
-        })
-    except Exception as e:
-        return jsonify({"error": f"Failed to send code: {str(e)}"}), 500
-
-@app.route('/logout', methods=['POST'])
-def logout():
-    if sort_status["running"]:
-        return jsonify({"error": "Cannot logout while a sort operation is running"}), 400
-    
-    try:
-        async def do_logout():
-            await client.log_out()
-        
-        run_async_in_telethon_thread(do_logout())
-        
-        if os.path.exists('session.session'):
-            os.remove('session.session')
-        return jsonify({"status": "success"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)

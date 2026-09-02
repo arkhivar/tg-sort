@@ -1,0 +1,1 @@
+- [Telegram Bot API topic discovery](telegram-bot-topic-limits.md) — regular bots can target known forum topics but cannot enumerate historical group topics
