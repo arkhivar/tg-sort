@@ -1,7 +1,7 @@
 # Self-hosting `tg-sort`
 
 This guide runs the complete Telegram Topic Sorter on a Linux server you
-control instead of Replit.
+control.
 
 The application consists of one Flask web process plus a background Telegram
 Bot API polling loop. It stores the learned/imported topic roster in
@@ -225,7 +225,7 @@ sudo systemctl status tg-sort
 
 After a code update, verify `/auth_status`, the UI, and the known-topic roster.
 
-## Backups and migration
+## Backups
 
 Back up the roster and environment file separately:
 
@@ -238,18 +238,8 @@ The environment file contains the bot token and must be stored like a
 credential. The roster contains topic IDs and metadata but should still be
 treated as private group information.
 
-To migrate from Replit:
-
-1. Securely copy `topics.json` to `/opt/tg-sort/topics.json`.
-2. Set ownership to the service account:
-   ```bash
-   sudo chown tg-sort:tg-sort /opt/tg-sort/topics.json
-   ```
-3. Create the new server’s environment file.
-4. Stop the Replit polling workflow before starting the self-hosted service.
-5. Start the systemd service and verify that polling is active.
-
-Never run the Replit poller and self-hosted poller at the same time.
+Never run two instances of this application against the same bot token; only
+one `getUpdates` consumer is allowed per bot.
 
 ## Token rotation and shutdown
 

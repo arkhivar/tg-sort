@@ -18,7 +18,7 @@ Self-hosting instructions are documented in
 - Sends a quiet marker message to each topic in sorted order.
 - Learns topic IDs from incoming Bot API updates.
 - Provides `/topic` inside Telegram to report the current topic ID.
-- Keeps the bot token server-side in Replit Secrets.
+- Keeps the bot token server-side in the environment file.
 
 ## Important Bot API limitation
 
@@ -53,8 +53,8 @@ BOT_TOKEN=the-token-from-BotFather
 SESSION_SECRET=optional-flask-session-secret
 ```
 
-On Replit, save `BOT_TOKEN` as a Secret. Never put it in frontend code, source
-control, screenshots, or chat messages.
+Keep the token in the server environment file only. Never put it in frontend
+code, source control, screenshots, or chat messages.
 
 Run:
 
@@ -62,7 +62,8 @@ Run:
 python main.py
 ```
 
-The configured Replit workflow uses Gunicorn on port 5000.
+For production, run Gunicorn under systemd as described in
+[DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Architecture
 
@@ -90,10 +91,10 @@ uses `sendMessage` with `message_thread_id` and `disable_notification`.
 
 ### Bot does not connect
 
-- Confirm the `BOT_TOKEN` Secret exists and is correct.
+- Confirm the `BOT_TOKEN` environment variable exists and is correct.
 - Ensure no other process is polling this bot.
 - Ensure no webhook is configured for the bot while this app uses polling.
-- Restart the Flask workflow after changing the Secret.
+- Restart the service after changing the token.
 
 ### Topics are missing
 

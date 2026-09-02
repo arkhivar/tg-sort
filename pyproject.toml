@@ -1,13 +1,16 @@
 [project]
-name = "repl-nix-workspace"
+name = "tg-sort"
 version = "0.1.0"
-description = "Add your description here"
+description = "Telegram forum topic sorter: Flask web UI plus a Bot API polling loop that sorts known forum topics."
 requires-python = ">=3.11"
 dependencies = [
-    "email-validator>=2.3.0",
     "flask>=3.1.2",
-    "flask-sqlalchemy>=3.1.1",
     "gunicorn>=23.0.0",
-    "psycopg2-binary>=2.9.11",
-    "python-dotenv>=1.1.1",
 ]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main", "bot_handler"]

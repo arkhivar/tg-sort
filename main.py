@@ -181,7 +181,7 @@ def require_bot():
             {
                 "error": (
                     "BOT_TOKEN is not configured. Create a bot with @BotFather and "
-                    "save its token as a Replit Secret named BOT_TOKEN."
+                    "set the BOT_TOKEN environment variable to its token."
                 )
             }
         ), 503
