@@ -71,7 +71,10 @@ For production, run Gunicorn under systemd as described in
   worker.
 - `bot_handler.py` contains the dependency-free HTTPS Bot API client, topic
   roster, permissions check, and sorting logic.
-- `topics.json` stores only learned/imported topic metadata.
+- `topics.json` stores only learned/imported topic metadata. It is local
+  runtime state, not tracked in git: one file holds every group (keyed by
+  chat ID) and grows as the bot learns topics. Back it up manually (see
+  [DEPLOYMENT.md](DEPLOYMENT.md)).
 - `static/app.js` and `templates/index.html` provide the web UI.
 
 The poller uses `getMe`, `getUpdates`, `getChat`, and `getChatMember`. Sorting

@@ -5,7 +5,9 @@ control.
 
 The application consists of one Flask web process plus a background Telegram
 Bot API polling loop. It stores the learned/imported topic roster in
-`topics.json`; there is no database.
+`topics.json`; there is no database. The roster is local runtime state and is
+intentionally not tracked in git — it holds every group (keyed by chat ID),
+grows as the bot learns topics, and is safe to back up and restore manually.
 
 ## Deployment requirements
 
