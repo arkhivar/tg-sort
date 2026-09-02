@@ -31,7 +31,7 @@ env/
 instance/
 .webassets-cache
 
-# Telethon session files
+# Legacy userbot session files (not used by the current Bot API app)
 *.session
 *.session-journal
 

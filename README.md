@@ -7,6 +7,9 @@ API_HASH, phone number, or a session file.
 The rationale for this architecture and the strict rules for reconsidering it
 are documented in [EVOLUTION.md](EVOLUTION.md).
 
+Self-hosting instructions are documented in
+[DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## What it does
 
 - Sorts known topics by emoji ID or title, ascending or descending.
