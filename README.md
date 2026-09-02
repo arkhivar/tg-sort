@@ -4,6 +4,9 @@ A Flask web app that uses a regular Telegram Bot API token to sort known forum
 topics. It does **not** use a user account, MTProto, Telethon, API_ID,
 API_HASH, phone number, or a session file.
 
+The rationale for this architecture and the strict rules for reconsidering it
+are documented in [EVOLUTION.md](EVOLUTION.md).
+
 ## What it does
 
 - Sorts known topics by emoji ID or title, ascending or descending.
