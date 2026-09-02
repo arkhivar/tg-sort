@@ -16,3 +16,14 @@ equivalent method.
 roster. Never imply that a regular bot can automatically recover every topic
 that existed before it joined, and validate the bot’s Manage Topics permission
 before sending.
+
+A one-time message or mention in each existing topic is a practical bootstrap:
+the bot receives the update, records the topic ID, and can then keep learning
+new topics as updates arrive.
+
+**Why:** This was confirmed in the target forum workflow; it avoids any need
+to access the account-level API while keeping the initial setup operationally
+small.
+
+**How to apply:** Make the bootstrap step explicit in onboarding instructions,
+then let the user reload the known-topic roster before sorting.

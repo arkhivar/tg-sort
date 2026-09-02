@@ -26,11 +26,13 @@ existed before it was added. This app intentionally sends only to topics in its
 known/imported roster:
 
 1. Add the bot to the forum group as an administrator with **Manage Topics**.
-2. Disable privacy mode in @BotFather if the bot should learn topics from
-   ordinary messages.
-3. Use **Load known topics** after the bot has observed messages.
-4. Use **/topic** inside Telegram to identify a topic.
-5. Import older topics in the UI using:
+2. Send `hello @tg_sort_bot` once in each existing topic. This is a controlled,
+   one-time bootstrap; each message gives the bot its topic ID.
+3. Use **Load known topics** in the web UI.
+4. Disable privacy mode in @BotFather if the bot should learn topics from
+   ordinary messages without a mention.
+5. Use **/topic** inside Telegram to identify a topic when needed.
+6. Import older topics in the UI using:
    `topic_id | title | emoji_id | pinned`
 
 Only `topic_id` is required. The other fields enable title/emoji sorting and

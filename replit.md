@@ -32,12 +32,13 @@ sends a quiet marker message to each selected topic in sorted order.
 ### Data flow
 
 1. The user creates a bot with @BotFather and adds it as a group administrator.
-2. The poller receives updates and stores observed topic metadata.
-3. The user optionally imports historical topic rows in the web UI.
-4. The user selects a group and sorting method.
-5. The server validates the target group and bot permissions.
-6. The worker sorts only the known/imported roster and sends quiet markers.
-7. The browser polls `/status` for progress and logs.
+2. The user sends one controlled mention/message in each existing topic.
+3. The poller receives those updates and stores the observed topic IDs.
+4. The user optionally imports metadata for historical topics in the web UI.
+5. The user selects a group and sorting method.
+6. The server validates the target group and bot permissions.
+7. The worker sorts only the known/imported roster and sends quiet markers.
+8. The browser polls `/status` for progress and logs.
 
 ## Telegram limitation
 

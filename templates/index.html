@@ -39,7 +39,7 @@
         <div class="card" id="sortCard">
             <h2>Start sorting</h2>
             <div class="info-message">
-                <strong>Safe mode limitation:</strong> Telegram’s Bot API can send to a known topic, but it still cannot list historical group topics. The bot learns topics from incoming updates; use the roster importer below for older topics.
+                <strong>Safe bootstrap:</strong> Send <code>hello @tg_sort_bot</code> once in each existing topic. The bot will save each topic ID from that message. Then click <strong>Load known topics</strong>; new topics will be learned automatically as the bot receives updates. The Bot API still cannot list old topics by itself.
             </div>
             <div class="form-group">
                 <label for="chatId">Group username or numeric chat ID</label>
