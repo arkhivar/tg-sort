@@ -214,6 +214,11 @@ the bot with another `getUpdates` consumer.
 
 ## Updating the server
 
+Push code changes to GitHub first; the server only ever pulls. The `tg-sort`
+account has its own `gh` login for this repository (token in
+`/opt/tg-sort/.config/gh`, registered as git's credential helper), so the
+pull below authenticates by itself.
+
 Stop the service before replacing the application so there is never a second
 polling process:
 
@@ -225,7 +230,29 @@ sudo systemctl start tg-sort
 sudo systemctl status tg-sort
 ```
 
-After a code update, verify `/auth_status`, the UI, and the known-topic roster.
+Notes for this host:
+
+- The `tg-sort` account has a `nologin` shell; `sudo -i -u tg-sort` fails by
+  design. Run one-off commands with `sudo -u tg-sort ...`, or open a shell
+  with `sudo -u tg-sort bash`.
+- If `gh` or git claims there are no credentials, check that `HOME` is set:
+  minimal shells (cron, agent tooling) may have it empty. Use `HOME=/root`
+  for root's login or `HOME=/opt/tg-sort` for the service account's login.
+- The systemd unit on this host binds the Netbird address
+  `100.98.36.137:5050` (reachable as `http://2de2tg:5050/`), not the example
+  `127.0.0.1:5000` from section 4. Verify after an update with:
+
+  ```bash
+  curl -fsS http://100.98.36.137:5050/auth_status
+  curl -fsS http://100.98.36.137:5050/chats
+  ```
+
+`/auth_status` should report `configured: true`, `connected: true`, and
+`poller.running: true`; `/chats` should list the monitored groups.
+
+Before the first update that changes the `topics.json` schema, back up the
+roster (see [Backups](#backups)); schema migrations run automatically and in
+place on first load.
 
 ## Backups
 
