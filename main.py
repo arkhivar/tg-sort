@@ -58,6 +58,12 @@ def set_status(**values: Any) -> None:
 
 
 def remember_update(update: dict[str, Any]) -> None:
+    member_update = update.get("my_chat_member")
+    if isinstance(member_update, dict):
+        chat = member_update.get("chat")
+        if isinstance(chat, dict) and topic_store.observe_chat(chat):
+            add_log(f"Monitoring chat: {chat.get('title') or chat.get('id')}")
+
     message = update.get("message")
     if not isinstance(message, dict):
         return
@@ -136,15 +142,18 @@ def background_worker() -> None:
         if task is None:
             break
         try:
+            chat_label = task["chat_id"]
+            if task.get("chat_title"):
+                chat_label = f"{task['chat_title']} ({task['chat_id']})"
             set_status(
                 running=True,
-                current_chat=task["chat_id"],
+                current_chat=chat_label,
                 progress=0,
                 total=0,
                 error=None,
                 logs=[],
             )
-            add_log(f"Starting safe bot sort for chat: {task['chat_id']}")
+            add_log(f"Starting safe bot sort for chat: {chat_label}")
             add_log(f"Sort method: {task['sort_by']}, order: {task['sort_order']}")
             if task["skip_pinned"]:
                 add_log("Only topics explicitly marked pinned in the roster will be skipped")
@@ -193,6 +202,7 @@ def require_bot():
 def canonical_chat_id(chat_id: str) -> str:
     """Resolve @usernames once so learned numeric topic keys are reusable."""
     chat = bot.get_chat(chat_id)
+    topic_store.observe_chat(chat)
     return str(chat["id"])
 
 
@@ -225,6 +235,15 @@ def auth_status():
             "poller": update_state,
         }
     )
+
+
+@app.route("/chats")
+def chats():
+    """List groups the bot has seen, for the UI group switcher.
+
+    Reads only the local store, so it works even before the bot connects.
+    """
+    return jsonify({"chats": topic_store.list_chats()})
 
 
 @app.route("/topics")
@@ -314,9 +333,11 @@ def start_sort():
     except TelegramBotError as exc:
         return jsonify({"error": str(exc)}), 400
 
+    chat_info = topic_store.chat_info(chat_id) or {}
     task_queue.put(
         {
             "chat_id": chat_id,
+            "chat_title": chat_info.get("title") or "",
             "sort_by": sort_by,
             "sort_order": sort_order,
             "skip_pinned": skip_pinned,

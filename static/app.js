@@ -5,6 +5,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const loadTopicsBtn = document.getElementById("loadTopicsBtn");
     const importTopicsBtn = document.getElementById("importTopicsBtn");
     const chatIdInput = document.getElementById("chatId");
+    const groupSelect = document.getElementById("groupSelect");
+    const refreshGroupsBtn = document.getElementById("refreshGroupsBtn");
     const progressCard = document.getElementById("progressCard");
     const progressFill = document.getElementById("progressFill");
     const progressText = document.getElementById("progressText");
@@ -33,11 +35,60 @@ document.addEventListener("DOMContentLoaded", () => {
     startBtn.addEventListener("click", startSort);
     loadTopicsBtn.addEventListener("click", loadTopics);
     importTopicsBtn.addEventListener("click", importTopics);
+    refreshGroupsBtn.addEventListener("click", () => loadGroups(false));
+    groupSelect.addEventListener("change", onGroupSelected);
+    chatIdInput.addEventListener("input", () => {
+        if (groupSelect.value && groupSelect.value !== chatIdInput.value.trim()) {
+            groupSelect.value = "";
+        }
+    });
     document.getElementById("fetchEmojisBtn").addEventListener("click", fetchEmojis);
     sortByRadios.forEach((radio) => radio.addEventListener("change", updateSortOptions));
     updateSortOptions();
     checkBotStatus();
+    loadGroups(false);
     statusInterval = setInterval(updateStatus, 1000);
+
+    async function loadGroups(preserveSelection) {
+        try {
+            const data = await fetch("/chats").then((response) => response.json());
+            const chats = data.chats || [];
+            const previous = preserveSelection ? groupSelect.value : "";
+            groupSelect.innerHTML = chats.length
+                ? "<option value=''>Select a group…</option>"
+                : "<option value=''>No groups learned yet</option>";
+            chats.forEach((chat) => {
+                const option = document.createElement("option");
+                option.value = String(chat.chat_id);
+                const title = chat.title || `Chat ${chat.chat_id}`;
+                option.textContent = `${title} — ${chat.topic_count} topic${chat.topic_count === 1 ? "" : "s"}`;
+                groupSelect.appendChild(option);
+            });
+            if (previous && chats.some((chat) => String(chat.chat_id) === previous)) {
+                groupSelect.value = previous;
+            }
+        } catch (error) {
+            console.error("Could not load groups:", error);
+        }
+    }
+
+    function onGroupSelected() {
+        const chatId = groupSelect.value;
+        if (!chatId) return;
+        chatIdInput.value = chatId;
+        resetGroupState();
+        loadTopics();
+    }
+
+    function resetGroupState() {
+        fetchedEmojis = [];
+        customEmojiOrder = [];
+        emojiList.style.display = "none";
+        emojiList.innerHTML = "";
+        knownTopics.style.display = "none";
+        knownTopics.innerHTML = "";
+        topicCount.textContent = "";
+    }
 
     function updateSortOptions() {
         const custom = document.querySelector('input[name="sortBy"]:checked').value === "custom";
@@ -86,6 +137,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (data.error) throw new Error(data.error);
             renderKnownTopics(data.topics || []);
             topicCount.textContent = `${(data.topics || []).length} known`;
+            loadGroups(true);
         } catch (error) {
             alert(`Could not load topics: ${error.message}`);
         } finally {
@@ -134,6 +186,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (data.error) throw new Error(data.error);
             renderKnownTopics(data.topics || []);
             topicCount.textContent = `${(data.topics || []).length} known`;
+            loadGroups(true);
             alert("Topic roster saved.");
         } catch (error) {
             alert(`Could not save roster: ${error.message}`);

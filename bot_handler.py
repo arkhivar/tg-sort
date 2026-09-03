@@ -129,16 +129,18 @@ def _now() -> str:
 
 
 class TopicStore:
-    """Small JSON-backed cache of topic metadata learned by the bot.
+    """Small JSON-backed cache of known chats and topic metadata.
 
     Bot API updates can reveal a topic as the bot sees messages in it.  The
     store also accepts manually imported topic rows for topics that existed
-    before the bot was added.
+    before the bot was added.  A per-chat roster powers the group switcher
+    in the web UI.
     """
 
     def __init__(self, path: str = "topics.json"):
         self.path = path
         self._lock = threading.Lock()
+        self._chats: dict[str, dict[str, Any]] = {}
         self._topics: dict[str, dict[str, dict[str, Any]]] = {}
         self._load()
 
@@ -146,10 +148,37 @@ class TopicStore:
         try:
             with open(self.path, "r", encoding="utf-8") as file:
                 data = json.load(file)
-            if isinstance(data, dict):
-                self._topics = data
         except (FileNotFoundError, json.JSONDecodeError, OSError):
-            self._topics = {}
+            return
+        if not isinstance(data, dict):
+            return
+        if "topics" in data or "chats" in data:
+            if isinstance(data.get("topics"), dict):
+                self._topics = data["topics"]
+            if isinstance(data.get("chats"), dict):
+                self._chats = data["chats"]
+            return
+        # Legacy flat schema: {chat_id: {topic_id: topic}}.
+        self._topics = data
+        for chat_key, chat_topics in data.items():
+            if not isinstance(chat_topics, dict):
+                continue
+            title = ""
+            last_seen = ""
+            for topic in chat_topics.values():
+                if not isinstance(topic, dict):
+                    continue
+                title = title or str(topic.get("chat_title") or "")
+                seen = str(topic.get("last_seen") or "")
+                if seen > last_seen:
+                    last_seen = seen
+            now = _now()
+            self._chats[chat_key] = {
+                "chat_id": chat_key,
+                "title": title,
+                "first_seen": last_seen or now,
+                "last_seen": last_seen or now,
+            }
 
     def _save(self) -> None:
         directory = os.path.dirname(self.path)
@@ -157,7 +186,12 @@ class TopicStore:
             os.makedirs(directory, exist_ok=True)
         temporary_path = f"{self.path}.tmp"
         with open(temporary_path, "w", encoding="utf-8") as file:
-            json.dump(self._topics, file, ensure_ascii=False, indent=2)
+            json.dump(
+                {"chats": self._chats, "topics": self._topics},
+                file,
+                ensure_ascii=False,
+                indent=2,
+            )
         os.replace(temporary_path, self.path)
 
     @staticmethod
@@ -167,6 +201,70 @@ class TopicStore:
     @staticmethod
     def _topic_key(topic_id: str | int) -> str:
         return str(int(topic_id))
+
+    def observe_chat(self, chat: dict[str, Any]) -> dict[str, Any] | None:
+        """Record a chat the bot has seen (from messages or my_chat_member)."""
+        chat_id = chat.get("id")
+        if chat_id is None:
+            return None
+        chat_key = self._chat_key(chat_id)
+        now = _now()
+        with self._lock:
+            entry = self._chats.setdefault(
+                chat_key,
+                {
+                    "chat_id": chat_key,
+                    "title": "",
+                    "first_seen": now,
+                    "last_seen": now,
+                },
+            )
+            title = chat.get("title") or chat.get("username") or ""
+            if title:
+                entry["title"] = title
+            entry["last_seen"] = now
+            self._save()
+            return dict(entry)
+
+    def _refresh_chat_locked(self, chat: dict[str, Any]) -> None:
+        """observe_chat variant for callers already holding the lock."""
+        chat_id = chat.get("id")
+        if chat_id is None:
+            return
+        chat_key = self._chat_key(chat_id)
+        now = _now()
+        entry = self._chats.setdefault(
+            chat_key,
+            {
+                "chat_id": chat_key,
+                "title": "",
+                "first_seen": now,
+                "last_seen": now,
+            },
+        )
+        title = chat.get("title") or chat.get("username") or ""
+        if title:
+            entry["title"] = title
+        entry["last_seen"] = now
+
+    def chat_info(self, chat_id: str | int) -> dict[str, Any] | None:
+        with self._lock:
+            entry = self._chats.get(self._chat_key(chat_id))
+            return dict(entry) if entry else None
+
+    def list_chats(self) -> list[dict[str, Any]]:
+        with self._lock:
+            chats = [
+                {**entry, "topic_count": len(self._topics.get(chat_key, {}))}
+                for chat_key, entry in self._chats.items()
+            ]
+        return sorted(
+            chats,
+            key=lambda item: (
+                (item.get("title") or "").casefold(),
+                str(item.get("chat_id")),
+            ),
+        )
 
     def observe_message(self, message: dict[str, Any]) -> dict[str, Any] | None:
         chat = message.get("chat") or {}
@@ -206,6 +304,7 @@ class TopicStore:
                 topic["closed"] = False
             topic["last_seen"] = _now()
             topic["chat_title"] = chat.get("title") or chat.get("username") or ""
+            self._refresh_chat_locked(chat)
             self._save()
             return dict(topic)
 
@@ -246,6 +345,7 @@ class TopicStore:
                     "source": "import",
                     "last_seen": _now(),
                 }
+            self._refresh_chat_locked({"id": chat_id})
             self._save()
         return self.list_for_chat(chat_id)
 
