@@ -279,6 +279,13 @@ class TopicStore:
             return None
 
         created = message.get("forum_topic_created") or {}
+        reply = message.get("reply_to_message") or {}
+        if not created.get("name") and isinstance(reply, dict):
+            # Messages posted in a topic are replies to the topic's creation
+            # message, which carries the name one level down.
+            if thread_id in (reply.get("message_id"), reply.get("message_thread_id")):
+                created = reply.get("forum_topic_created") or {}
+        edited = message.get("forum_topic_edited") or {}
         closed = "forum_topic_closed" in message
         reopened = "forum_topic_reopened" in message
         with self._lock:
@@ -298,6 +305,10 @@ class TopicStore:
                 topic["title"] = created["name"]
             if created.get("icon_custom_emoji_id"):
                 topic["emoji_id"] = str(created["icon_custom_emoji_id"])
+            if edited.get("name"):
+                topic["title"] = edited["name"]
+            if edited.get("icon_custom_emoji_id"):
+                topic["emoji_id"] = str(edited["icon_custom_emoji_id"])
             if closed:
                 topic["closed"] = True
             elif reopened:
