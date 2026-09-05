@@ -55,6 +55,36 @@ entirely.
 - Topics created before the bot started watching stay nameless until someone
   posts in them again (the name backfills automatically from the reply
   payload) or the topic is renamed.
+- The echoed name in `reply_to_message.forum_topic_created` is **frozen at
+  creation time**: for a topic renamed in the past, backfill yields the
+  *original* name, not the current one. There is no API to read the current
+  name; only a fresh rename (`forum_topic_edited`, always applied) or a manual
+  roster import updates it. For the same reason `observe_message` uses the
+  echo only to fill empty fields — applying it unconditionally overwrote
+  fresher names on every observed message (bug found 2026-09-05, when a
+  rename appeared to "not work" because the next ordinary message restored
+  the stale creation name).
+
+## Renames (`forum_topic_edited`)
+
+Confirmed live (2026-09-05, test group `-1002686348537`): renaming a topic
+delivers an ordinary `message` update with `message_thread_id` set and
+
+```json
+"forum_topic_edited": {"name": "I've just remember this one"}
+```
+
+(optionally also `icon_custom_emoji_id` when the icon changes). These arrive
+through the existing `allowed_updates: ["message"]` polling — no extra
+subscription needed. `observe_message` always applies them, so a rename is
+the freshest name source and is never clobbered by later creation-name
+echoes.
+
+Future: the owner wants **rename history** (checkpoints per topic). The
+store currently keeps only the latest name; capturing history means
+appending `{"name": ..., "date": message.date}` to a per-topic list on each
+`forum_topic_edited` (and on creation). Only renames that happen while the
+bot is polling can be captured — Telegram does not expose past renames.
 
 ## Credits
 
